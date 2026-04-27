@@ -117,15 +117,16 @@ if ! pidof systemd > /dev/null 2>&1; then
   echo "  Setting up TCP proxy: localhost:6444 -> $SERVER_IP:6443 via SOCKS5"
   
   # Start TCP proxy using proxychains + socat
-  # This forwards localhost:6444 to the k3s server via tailscale SOCKS5 proxy
+  # This forwards localhost:6445 to the k3s server via tailscale SOCKS5 proxy
+  # Note: We use 6445 instead of 6444 to avoid conflict with k3s internal load balancer
   pkill -f "proxychains4.*socat" 2>/dev/null || true
   sleep 1
-  nohup proxychains4 socat TCP-LISTEN:6444,fork TCP:$SERVER_IP:6443 > /var/log/tcp-proxy.log 2>&1 &
+  nohup proxychains4 socat TCP-LISTEN:6445,fork TCP:$SERVER_IP:6443 > /var/log/tcp-proxy.log 2>&1 &
   sleep 2
   
   # Update K3S_URL to use local proxy
-  echo "  Using local proxy: https://127.0.0.1:6444"
-  export K3S_URL="https://127.0.0.1:6444"
+  echo "  Using local proxy: https://127.0.0.1:6445"
+  export K3S_URL="https://127.0.0.1:6445"
 fi
 
 curl -sfL https://get.k3s.io | K3S_URL="$K3S_URL" K3S_TOKEN="$K3S_TOKEN" sh -
@@ -138,7 +139,7 @@ if ! pidof systemd > /dev/null 2>&1; then
   sleep 2
   
   # Start k3s agent pointing to local TCP proxy (which forwards via SOCKS5)
-  export K3S_URL="https://127.0.0.1:6444"
+  export K3S_URL="https://127.0.0.1:6445"
   nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
   echo "  k3s agent started, waiting for connection..."
   sleep 20

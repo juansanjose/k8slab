@@ -35,11 +35,30 @@ fi
 
 # 2. Start Tailscale
 echo "[2/6] Starting Tailscale..."
-# For headless/authkey mode (recommended for automation):
-# export TS_AUTHKEY=tskey-auth-xxxxxxxxxxxx
-# tailscale up --authkey=$TS_AUTHKEY
-# For interactive mode (default):
-sudo tailscale up || true
+
+# Create required directories
+mkdir -p /var/lib/tailscale /run/tailscale
+
+# Check if systemd is available (not in containers)
+if pidof systemd > /dev/null 2>&1; then
+    echo "  Using systemd to start tailscaled..."
+    sudo systemctl start tailscaled || true
+else
+    echo "  systemd not available (container), starting tailscaled manually..."
+    # Start tailscaled in background with userspace networking (no TUN device needed)
+    sudo tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock > /var/log/tailscaled.log 2>&1 &
+    sleep 3
+fi
+
+# Check if authkey is available for non-interactive mode
+if [[ -n "${TS_AUTHKEY:-}" ]]; then
+    echo "  Using authkey for non-interactive authentication..."
+    sudo tailscale up --authkey="$TS_AUTHKEY" --accept-routes
+else
+    echo "  For interactive mode, visit the URL below to authenticate:"
+    echo "  (Or set TS_AUTHKEY env var for non-interactive mode)"
+    sudo tailscale up --accept-routes || true
+fi
 
 # Wait for Tailscale to get an IP
 TAILSCALE_IP=""

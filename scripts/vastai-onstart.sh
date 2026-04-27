@@ -103,17 +103,28 @@ echo "Joining cluster at: $K3S_URL"
 # because --tun=userspace-networking doesn't intercept all traffic automatically
 if ! pidof systemd > /dev/null 2>&1; then
   echo "  Container detected, configuring Tailscale SOCKS5 proxy..."
-  export ALL_PROXY="socks5h://localhost:1080"
-  export HTTP_PROXY="socks5h://localhost:1080"
-  export HTTPS_PROXY="socks5h://localhost:1080"
   
-  # Write proxy settings to k3s environment file for persistence
-  mkdir -p /etc/default
-  cat > /etc/default/k3s-agent << EOF
-ALL_PROXY="socks5h://localhost:1080"
-HTTPS_PROXY="socks5h://localhost:1080"
-HTTP_PROXY="socks5h://localhost:1080"
-EOF
+  # Install proxychains and socat for TCP proxying through SOCKS5
+  apt-get install -y -qq proxychains4 socat 2>/dev/null || true
+  
+  # Configure proxychains to use tailscale SOCKS5 proxy
+  mkdir -p /etc
+  printf '%s\n' 'strict_chain' 'proxy_dns' 'remote_dns_subnet 224' 'tcp_read_time_out 15000' 'tcp_connect_time_out 8000' '' '[ProxyList]' 'socks5 127.0.0.1 1080' > /etc/proxychains4.conf
+  
+  # Extract server IP from K3S_URL
+  SERVER_IP=$(echo "$K3S_URL" | sed -E 's|https?://||' | sed -E 's|:.*||')
+  echo "  Setting up TCP proxy: localhost:6444 -> $SERVER_IP:6443 via SOCKS5"
+  
+  # Start TCP proxy using proxychains + socat
+  # This forwards localhost:6444 to the k3s server via tailscale SOCKS5 proxy
+  pkill -f "proxychains4.*socat" 2>/dev/null || true
+  sleep 1
+  nohup proxychains4 socat TCP-LISTEN:6444,fork TCP:$SERVER_IP:6443 > /var/log/tcp-proxy.log 2>&1 &
+  sleep 2
+  
+  # Update K3S_URL to use local proxy
+  echo "  Using local proxy: https://127.0.0.1:6444"
+  export K3S_URL="https://127.0.0.1:6444"
 fi
 
 curl -sfL https://get.k3s.io | K3S_URL="$K3S_URL" K3S_TOKEN="$K3S_TOKEN" sh -
@@ -125,9 +136,9 @@ if ! pidof systemd > /dev/null 2>&1; then
   pkill -f "k3s agent" 2>/dev/null || true
   sleep 2
   
-  # Start k3s agent in background with proxy settings and disable internal load-balancer
-  # --disable-apiserver-lb connects directly to server URL instead of 127.0.0.1:6444
-  nohup bash -c 'export ALL_PROXY="socks5h://localhost:1080"; export HTTPS_PROXY="socks5h://localhost:1080"; k3s agent --disable-apiserver-lb' > /var/log/k3s-agent.log 2>&1 &
+  # Start k3s agent pointing to local TCP proxy (which forwards via SOCKS5)
+  export K3S_URL="https://127.0.0.1:6444"
+  nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
   echo "  k3s agent started, waiting for connection..."
   sleep 20
 fi
@@ -150,10 +161,11 @@ echo "Restarting k3s-agent to apply NVIDIA runtime config..."
 if pidof systemd > /dev/null 2>&1; then
   systemctl restart k3s-agent || true
 else
-  # For containers, restart with proxy settings and disabled load-balancer
+  # For containers, restart pointing to local TCP proxy
   pkill -f "k3s agent" 2>/dev/null || true
   sleep 2
-  nohup bash -c 'export ALL_PROXY="socks5h://localhost:1080"; export HTTPS_PROXY="socks5h://localhost:1080"; k3s agent --disable-apiserver-lb' > /var/log/k3s-agent.log 2>&1 &
+  export K3S_URL="https://127.0.0.1:6444"
+  nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
 fi
 
 # 6. Verify

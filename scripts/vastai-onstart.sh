@@ -106,6 +106,14 @@ if ! pidof systemd > /dev/null 2>&1; then
   export ALL_PROXY="socks5h://localhost:1080"
   export HTTP_PROXY="socks5h://localhost:1080"
   export HTTPS_PROXY="socks5h://localhost:1080"
+  
+  # Write proxy settings to k3s environment file for persistence
+  mkdir -p /etc/default
+  cat > /etc/default/k3s-agent << EOF
+ALL_PROXY="socks5h://localhost:1080"
+HTTPS_PROXY="socks5h://localhost:1080"
+HTTP_PROXY="socks5h://localhost:1080"
+EOF
 fi
 
 curl -sfL https://get.k3s.io | K3S_URL="$K3S_URL" K3S_TOKEN="$K3S_TOKEN" sh -
@@ -117,10 +125,11 @@ if ! pidof systemd > /dev/null 2>&1; then
   pkill -f "k3s agent" 2>/dev/null || true
   sleep 2
   
-  # Start k3s agent in background with proxy settings
-  nohup bash -c 'export ALL_PROXY="socks5h://localhost:1080"; export HTTPS_PROXY="socks5h://localhost:1080"; k3s agent' > /var/log/k3s-agent.log 2>&1 &
-echo "  k3s agent started, waiting for connection..."
-  sleep 15
+  # Start k3s agent in background with proxy settings and disable internal load-balancer
+  # --disable-apiserver-lb connects directly to server URL instead of 127.0.0.1:6444
+  nohup bash -c 'export ALL_PROXY="socks5h://localhost:1080"; export HTTPS_PROXY="socks5h://localhost:1080"; k3s agent --disable-apiserver-lb' > /var/log/k3s-agent.log 2>&1 &
+  echo "  k3s agent started, waiting for connection..."
+  sleep 20
 fi
 
 # 5. Configure container runtime for NVIDIA
@@ -141,10 +150,10 @@ echo "Restarting k3s-agent to apply NVIDIA runtime config..."
 if pidof systemd > /dev/null 2>&1; then
   systemctl restart k3s-agent || true
 else
-  # For containers, restart with proxy settings
+  # For containers, restart with proxy settings and disabled load-balancer
   pkill -f "k3s agent" 2>/dev/null || true
   sleep 2
-  nohup bash -c 'export ALL_PROXY="socks5h://localhost:1080"; export HTTPS_PROXY="socks5h://localhost:1080"; k3s agent' > /var/log/k3s-agent.log 2>&1 &
+  nohup bash -c 'export ALL_PROXY="socks5h://localhost:1080"; export HTTPS_PROXY="socks5h://localhost:1080"; k3s agent --disable-apiserver-lb' > /var/log/k3s-agent.log 2>&1 &
 fi
 
 # 6. Verify

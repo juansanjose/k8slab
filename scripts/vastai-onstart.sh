@@ -139,8 +139,13 @@ if ! pidof systemd > /dev/null 2>&1; then
   sleep 2
   
   # Start k3s agent pointing to local TCP proxy (which forwards via SOCKS5)
+  # Use native snapshotter because overlayfs is not supported in containers
   export K3S_URL="https://127.0.0.1:6445"
-  nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
+  mkdir -p /etc/rancher/k3s
+cat > /etc/rancher/k3s/config.yaml << EOF
+snapshotter: native
+EOF
+  nohup k3s agent --snapshotter native > /var/log/k3s-agent.log 2>&1 &
   echo "  k3s agent started, waiting for connection..."
   sleep 20
 fi
@@ -166,8 +171,8 @@ else
   # For containers, restart pointing to local TCP proxy
   pkill -f "k3s agent" 2>/dev/null || true
   sleep 2
-  export K3S_URL="https://127.0.0.1:6444"
-  nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
+  export K3S_URL="https://127.0.0.1:6445"
+  nohup k3s agent --snapshotter native > /var/log/k3s-agent.log 2>&1 &
 fi
 
 # 6. Verify

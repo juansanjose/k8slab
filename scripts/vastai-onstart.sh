@@ -99,6 +99,19 @@ echo "[4/6] Installing k3s agent..."
 echo "Joining cluster at: $K3S_URL"
 curl -sfL https://get.k3s.io | K3S_URL="$K3S_URL" K3S_TOKEN="$K3S_TOKEN" sh -
 
+# Start k3s agent manually if systemd is not available (containers)
+if ! pidof systemd > /dev/null 2>&1; then
+  echo "  systemd not available, starting k3s agent manually..."
+  # Kill any existing k3s agent
+  pkill -f "k3s agent" 2>/dev/null || true
+  sleep 2
+  
+  # Start k3s agent in background
+  nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
+  echo "  k3s agent started, waiting for connection..."
+  sleep 10
+fi
+
 # 5. Configure container runtime for NVIDIA
 echo "[5/6] Configuring container runtime..."
 # k3s uses its own containerd, so we need to configure it specifically
@@ -114,7 +127,14 @@ fi
 
 # Restart k3s-agent to pick up container runtime changes
 echo "Restarting k3s-agent to apply NVIDIA runtime config..."
-systemctl restart k3s-agent || true
+if pidof systemd > /dev/null 2>&1; then
+  systemctl restart k3s-agent || true
+else
+  # For containers, just restart the process
+  pkill -f "k3s agent" 2>/dev/null || true
+  sleep 2
+  nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
+fi
 
 # 6. Verify
 echo "[6/6] Verifying setup..."
@@ -126,6 +146,28 @@ if command -v nvidia-smi &>/dev/null; then
   nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader || true
 else
   echo "WARNING: nvidia-smi not found. GPU drivers may not be installed."
+fi
+
+# Check k3s agent status
+echo ""
+echo "k3s agent status:"
+if pgrep -f "k3s agent" > /dev/null; then
+  echo "  k3s agent is running"
+else
+  echo "  WARNING: k3s agent is not running"
+fi
+
+# Test connectivity to server
+echo ""
+echo "Testing connectivity to k3s server at $K3S_URL..."
+if curl -k --max-time 10 "$K3S_URL" > /dev/null 2>&1; then
+  echo "  Successfully connected to k3s server"
+else
+  echo "  WARNING: Cannot connect to k3s server"
+  echo "  This may be due to:"
+  echo "    - Firewall blocking port 6443"
+  echo "    - k3s server not running"
+  echo "    - Network connectivity issues"
 fi
 
 echo ""

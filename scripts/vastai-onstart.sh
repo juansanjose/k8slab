@@ -108,8 +108,9 @@ if ! pidof systemd > /dev/null 2>&1; then
   apt-get install -y -qq proxychains4 socat 2>/dev/null || true
   
   # Configure proxychains to use tailscale SOCKS5 proxy
+  # Note: proxy_dns is disabled because tailscale DNS doesn't work well in containers
   mkdir -p /etc
-  printf '%s\n' 'strict_chain' 'proxy_dns' 'remote_dns_subnet 224' 'tcp_read_time_out 15000' 'tcp_connect_time_out 8000' '' '[ProxyList]' 'socks5 127.0.0.1 1080' > /etc/proxychains4.conf
+  printf '%s\n' 'strict_chain' 'tcp_read_time_out 15000' 'tcp_connect_time_out 8000' '' '[ProxyList]' 'socks5 127.0.0.1 1080' > /etc/proxychains4.conf
   
   # Extract server IP from K3S_URL
   SERVER_IP=$(echo "$K3S_URL" | sed -E 's|https?://||' | sed -E 's|:.*||')

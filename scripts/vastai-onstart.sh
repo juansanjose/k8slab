@@ -45,19 +45,20 @@ if pidof systemd > /dev/null 2>&1; then
     sudo systemctl start tailscaled || true
 else
     echo "  systemd not available (container), starting tailscaled manually..."
-    # Start tailscaled in background with userspace networking (no TUN device needed)
-    sudo tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock > /var/log/tailscaled.log 2>&1 &
+    # Start tailscaled in background with userspace networking + SOCKS5 proxy
+    # SOCKS5 proxy is required because containers don't have /dev/net/tun
+    sudo tailscaled --tun=userspace-networking --socks5-server=localhost:1080 --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock > /var/log/tailscaled.log 2>&1 &
     sleep 3
 fi
 
 # Check if authkey is available for non-interactive mode
 if [[ -n "${TS_AUTHKEY:-}" ]]; then
     echo "  Using authkey for non-interactive authentication..."
-    sudo tailscale up --authkey="$TS_AUTHKEY" --accept-routes
+    sudo tailscale up --authkey="$TS_AUTHKEY" --accept-routes --netfilter-mode=off
 else
     echo "  For interactive mode, visit the URL below to authenticate:"
     echo "  (Or set TS_AUTHKEY env var for non-interactive mode)"
-    sudo tailscale up --accept-routes || true
+    sudo tailscale up --accept-routes --netfilter-mode=off || true
 fi
 
 # Wait for Tailscale to get an IP
@@ -97,6 +98,16 @@ fi
 # 4. Install k3s agent
 echo "[4/6] Installing k3s agent..."
 echo "Joining cluster at: $K3S_URL"
+
+# In containers, we need to use Tailscale's SOCKS5 proxy for connectivity
+# because --tun=userspace-networking doesn't intercept all traffic automatically
+if ! pidof systemd > /dev/null 2>&1; then
+  echo "  Container detected, configuring Tailscale SOCKS5 proxy..."
+  export ALL_PROXY="socks5h://localhost:1080"
+  export HTTP_PROXY="socks5h://localhost:1080"
+  export HTTPS_PROXY="socks5h://localhost:1080"
+fi
+
 curl -sfL https://get.k3s.io | K3S_URL="$K3S_URL" K3S_TOKEN="$K3S_TOKEN" sh -
 
 # Start k3s agent manually if systemd is not available (containers)
@@ -106,10 +117,10 @@ if ! pidof systemd > /dev/null 2>&1; then
   pkill -f "k3s agent" 2>/dev/null || true
   sleep 2
   
-  # Start k3s agent in background
-  nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
-  echo "  k3s agent started, waiting for connection..."
-  sleep 10
+  # Start k3s agent in background with proxy settings
+  nohup bash -c 'export ALL_PROXY="socks5h://localhost:1080"; export HTTPS_PROXY="socks5h://localhost:1080"; k3s agent' > /var/log/k3s-agent.log 2>&1 &
+echo "  k3s agent started, waiting for connection..."
+  sleep 15
 fi
 
 # 5. Configure container runtime for NVIDIA
@@ -130,10 +141,10 @@ echo "Restarting k3s-agent to apply NVIDIA runtime config..."
 if pidof systemd > /dev/null 2>&1; then
   systemctl restart k3s-agent || true
 else
-  # For containers, just restart the process
+  # For containers, restart with proxy settings
   pkill -f "k3s agent" 2>/dev/null || true
   sleep 2
-  nohup k3s agent > /var/log/k3s-agent.log 2>&1 &
+  nohup bash -c 'export ALL_PROXY="socks5h://localhost:1080"; export HTTPS_PROXY="socks5h://localhost:1080"; k3s agent' > /var/log/k3s-agent.log 2>&1 &
 fi
 
 # 6. Verify

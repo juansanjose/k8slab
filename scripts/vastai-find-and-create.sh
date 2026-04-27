@@ -86,6 +86,11 @@ echo "  K3S_URL: $K3S_URL"
 echo "  K3S_TOKEN: ${K3S_TOKEN:0:20}..."
 echo "  Max price: \$${MAX_DPH}/hr"
 echo "  Script directory: ${SCRIPT_DIR}"
+if [[ -n "${TS_AUTHKEY:-}" ]]; then
+    echo "  TS_AUTHKEY: ${TS_AUTHKEY:0:15}... (configured)"
+else
+    echo -e "  ${YELLOW}TS_AUTHKEY: not set${NC}"
+fi
 echo ""
 
 # Check if onstart script exists locally
@@ -304,6 +309,15 @@ CREATE_CMD="${CREATE_CMD} --direct"
 CREATE_CMD="${CREATE_CMD} --env K3S_URL=${K3S_URL}"
 CREATE_CMD="${CREATE_CMD} --env K3S_TOKEN=${K3S_TOKEN}"
 
+# Pass Tailscale authkey if available
+if [[ -n "${TS_AUTHKEY:-}" ]]; then
+    CREATE_CMD="${CREATE_CMD} --env TS_AUTHKEY=${TS_AUTHKEY}"
+    echo -e "${GREEN}✓ Tailscale authkey configured for non-interactive auth${NC}"
+else
+    echo -e "${YELLOW}⚠ No TS_AUTHKEY set. You'll need to authenticate manually via browser.${NC}"
+    echo "  Get one at: https://login.tailscale.com/admin/settings/keys"
+fi
+
 # If we have the onstart script locally, we'll provide instructions
 if [[ -f "$ONSTART_SCRIPT" ]]; then
     echo -e "${BLUE}Note: Onstart script found locally.${NC}"
@@ -316,7 +330,12 @@ fi
 # Simple onstart command that downloads and runs the script from the repo
 REPO_URL=$(git remote get-url origin 2>/dev/null | sed 's/.*github.com\///' | sed 's/\.git$//' || echo "")
 if [[ -n "$REPO_URL" ]]; then
-    ONSTART_CMD="bash -c 'export K3S_URL=${K3S_URL} && export K3S_TOKEN=${K3S_TOKEN} && curl -fsSL https://raw.githubusercontent.com/${REPO_URL}/main/scripts/vastai-onstart.sh | bash'"
+    # Build onstart command with all env vars
+    ONSTART_CMD="bash -c 'export K3S_URL=${K3S_URL} && export K3S_TOKEN=${K3S_TOKEN}"
+    if [[ -n "${TS_AUTHKEY:-}" ]]; then
+        ONSTART_CMD="${ONSTART_CMD} && export TS_AUTHKEY=${TS_AUTHKEY}"
+    fi
+    ONSTART_CMD="${ONSTART_CMD} && curl -fsSL https://raw.githubusercontent.com/${REPO_URL}/main/scripts/vastai-onstart.sh | bash'"
     CREATE_CMD="${CREATE_CMD} --onstart-cmd \"${ONSTART_CMD}\""
     echo "  Using remote onstart script from GitHub"
 else

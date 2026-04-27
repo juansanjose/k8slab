@@ -28,7 +28,11 @@ This repo contains everything you need to build a cheap, hands-on lab for learni
 
 1. **Install Tailscale** on your laptop and sign up (free)
 2. **Run `scripts/setup-k3s-server.sh`** to reconfigure k3s for Tailscale
-3. **Rent a Vast.ai GPU instance** using `scripts/vastai-find-and-create.sh` (interactive finder + auto-setup) or manually rent and run `scripts/vastai-onstart.sh` inside it
+3. **Rent a Vast.ai GPU instance** using `scripts/vastai-find-and-create.sh`
+   - Get a Tailscale auth key from https://login.tailscale.com/admin/settings/keys
+   - `export TS_AUTHKEY=tskey-auth-xxxxxxxxxxxx`
+   - Run `./scripts/vastai-find-and-create.sh` (interactive finder + auto-setup)
+   - Or manually rent and run `scripts/vastai-onstart.sh` inside the instance
 4. **Verify the node joined** with `kubectl get nodes`
 5. **Run `scripts/install-gpu-operator.sh`** to enable GPU support
 6. **Test with `scripts/test-gpu-pod.sh`** or `kubectl apply -f manifests/gpu-test-pods.yaml`

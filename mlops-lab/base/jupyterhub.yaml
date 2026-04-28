@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyterhub
+  namespace: mlops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jupyterhub
+  template:
+    metadata:
+      labels:
+        app: jupyterhub
+    spec:
+      containers:
+      - name: jupyterhub
+        image: jupyterhub/jupyterhub:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          pip install jupyterlab
+          jupyterhub
+          --ip=0.0.0.0
+          --port=8000
+          --config=/etc/jupyterhub/jupyterhub_config.py
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: jupyter-storage
+          mountPath: /data
+        - name: config
+          mountPath: /etc/jupyterhub
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: jupyter-storage
+        persistentVolumeClaim:
+          claimName: jupyter-pvc
+      - name: config
+        configMap:
+          name: jupyterhub-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jupyterhub
+  namespace: mlops
+spec:
+  selector:
+    app: jupyterhub
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jupyterhub-config
+  namespace: mlops
+data:
+  jupyterhub_config.py: |
+    c = get_config()
+    c.JupyterHub.authenticator_class = 'dummyauthenticator.DummyAuthenticator'
+    c.DummyAuthenticator.password = 'mlops123'
+    c.Authenticator.admin_users = {'admin'}
+    c.Spawner.cmd = ['jupyter-labhub']
+    c.Spawner.notebook_dir = '/data'
+    c.Spawner.args = ['--NotebookApp.allow_root=True']
+    c.JupyterHub.hub_ip = '0.0.0.0'
+    c.JupyterHub.hub_port = 8081

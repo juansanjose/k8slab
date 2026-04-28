@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeflow-pipelines-api
+  namespace: kubeflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeflow-pipelines-api
+  template:
+    metadata:
+      labels:
+        app: kubeflow-pipelines-api
+    spec:
+      serviceAccountName: kubeflow-pipelines
+      containers:
+      - name: ml-pipeline-api-server
+        image: gcr.io/ml-pipeline/api-server:2.0.5
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: OBJECTSTORECONFIG_SECURE
+          value: "false"
+        - name: OBJECTSTORECONFIG_BUCKETNAME
+          value: mlpipeline
+        - name: OBJECTSTORECONFIG_HOST
+          value: minio.mlops:9000
+        - name: OBJECTSTORECONFIG_ACCESSKEY
+          value: minioadmin
+        - name: OBJECTSTORECONFIG_SECRETACCESSKEY
+          value: minioadmin123
+        - name: DBCONFIG_CONMAXLIFETIMESEC
+          value: "120"
+        - name: DBCONFIG_DRIVERNAME
+          value: mysql
+        - name: DBCONFIG_DATASOURCENAME
+          value: root:root@tcp(mysql.kubeflow:3306)/mlpipeline?charset=utf8mb4&parseTime=True&loc=Local
+        - name: DBCONFIG_CONMAXIDLESEC
+          value: "120"
+        - name: CACHE_ENABLED
+          value: "true"
+        - name: CRON_SCHEDULE_TIMEZONE
+          value: UTC
+        - name: ML_PIPELINE_VISUALIZATIONSERVER_SERVICE_HOST
+          value: "ml-pipeline-ui"
+        - name: ML_PIPELINE_VISUALIZATIONSERVER_SERVICE_PORT
+          value: "80"
+        ports:
+        - containerPort: 8888
+          name: http
+        - containerPort: 8887
+          name: grpc
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-pipeline
+  namespace: kubeflow
+spec:
+  selector:
+    app: kubeflow-pipelines-api
+  ports:
+  - port: 8888
+    targetPort: 8888
+    name: http
+  - port: 8887
+    targetPort: 8887
+    name: grpc
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeflow-pipelines
+  namespace: kubeflow
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeflow-pipelines
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec", "events", "services", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows", "workflows/finalizers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeflow-pipelines
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeflow-pipelines
+subjects:
+- kind: ServiceAccount
+  name: kubeflow-pipelines
+  namespace: kubeflow

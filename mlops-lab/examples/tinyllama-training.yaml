@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-training-tinyllama
+spec:
+  template:
+    metadata:
+      annotations:
+        vast.ai/gpu-name: "RTX 4090"
+        vast.ai/max-dph: "0.50"
+        vast.ai/disk-gb: "30"
+    spec:
+      nodeName: virtual-vastai
+      restartPolicy: Never
+      containers:
+      - name: training
+        image: huggingface/transformers-pytorch-gpu:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Install additional packages
+          pip install peft datasets accelerate bitsandbytes
+          
+          # Run training
+          python /workspace/train_llm.py
+        env:
+        - name: MODEL_NAME
+          value: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+        - name: DATASET_NAME
+          value: "tatsu-lab/alpaca"
+        - name: OUTPUT_DIR
+          value: "/workspace/output"
+        - name: NUM_EPOCHS
+          value: "1"
+        - name: BATCH_SIZE
+          value: "2"
+        - name: LEARNING_RATE
+          value: "2e-4"
+        - name: LORA_R
+          value: "8"
+        - name: LORA_ALPHA
+          value: "16"
+        # Uncomment to push to HuggingFace Hub
+        # - name: HF_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: hf-token
+        #       key: token
+        # - name: PUSH_TO_HUB
+        #   value: "true"
+        # - name: HF_REPO_ID
+        #   value: "your-username/tinyllama-alpaca"
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      volumes:
+      - name: workspace
+        emptyDir:
+          sizeLimit: 30Gi
+      tolerations:
+      - key: "virtual-kubelet.io/provider"
+        operator: "Equal"
+        value: "vastai"
+        effect: "NoSchedule"
+---
+# Secret for HuggingFace token (optional)
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: hf-token
+# type: Opaque
+# stringData:
+#   token: "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

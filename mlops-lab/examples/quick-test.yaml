@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: quick-llm-test
+spec:
+  template:
+    metadata:
+      annotations:
+        vast.ai/gpu-name: "RTX 4090"
+        vast.ai/max-dph: "0.30"
+        vast.ai/disk-gb: "20"
+    spec:
+      nodeName: virtual-vastai
+      restartPolicy: Never
+      containers:
+      - name: training
+        image: huggingface/transformers-pytorch-gpu:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "=== Quick LLM Test ==="
+          echo "GPU Info:"
+          nvidia-smi
+          echo ""
+          
+          echo "Installing dependencies..."
+          pip install -q peft datasets accelerate
+          
+          echo ""
+          echo "Testing model download..."
+          python3 << 'PYEOF'
+          from transformers import AutoModelForCausalLM, AutoTokenizer
+          import torch
+          
+          model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+          print(f"Loading {model_name}...")
+          
+          tokenizer = AutoTokenizer.from_pretrained(model_name)
+          model = AutoModelForCausalLM.from_pretrained(
+              model_name,
+              torch_dtype=torch.float16,
+              device_map="auto"
+          )
+          
+          print(f"Model loaded successfully!")
+          print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+          print(f"GPU Memory used: {torch.cuda.memory_allocated() / 1e9:.1f} GB")
+          
+          # Quick inference test
+          prompt = "Hello, I am a language model"
+          inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+          outputs = model.generate(**inputs, max_new_tokens=20, do_sample=False)
+          result = tokenizer.decode(outputs[0], skip_special_tokens=True)
+          
+          print(f"\nPrompt: {prompt}")
+          print(f"Output: {result}")
+          print("\n=== Test Complete ===")
+          PYEOF
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+      tolerations:
+      - key: "virtual-kubelet.io/provider"
+        operator: "Equal"
+        value: "vastai"
+        effect: "NoSchedule"
+      # Optional: Set a time limit so it doesn't run forever
+      activeDeadlineSeconds: 1800  # 30 minutes max

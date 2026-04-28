@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inferenceservice-config
+  namespace: kserve
+data:
+  predictors: |
+    {
+      "tensorflow": {
+        "image": "tensorflow/serving",
+        "defaultImageVersion": "latest"
+      },
+      "sklearn": {
+        "image": "kserve/sklearnserver",
+        "defaultImageVersion": "latest"
+      },
+      "xgboost": {
+        "image": "kserve/xgbserver",
+        "defaultImageVersion": "latest"
+      },
+      "pytorch": {
+        "image": "kserve/torchserve-kfs",
+        "defaultImageVersion": "latest"
+      },
+      "triton": {
+        "image": "nvcr.io/nvidia/tritonserver",
+        "defaultImageVersion": "latest"
+      }
+    }
+  explainers: |
+    {
+      "alibi": {
+        "image": "kserve/alibi-explainer",
+        "defaultImageVersion": "latest"
+      }
+    }
+  ingress: |
+    {
+      "ingressGateway": "kserve-local-gateway",
+      "ingressService": "kserve-local-gateway.istio-system.svc.cluster.local"
+    }

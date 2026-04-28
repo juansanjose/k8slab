@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: mlops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      containers:
+      - name: mlflow
+        image: python:3.10-slim
+        command:
+        - /bin/sh
+        - -c
+        - |
+          pip install mlflow boto3 psycopg2-binary
+          mlflow server \
+          --backend-store-uri postgresql://mlops:mlops123@postgres:5432/mlflow \
+          --default-artifact-root s3://mlflow \
+          --host 0.0.0.0 \
+          --port 5000
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          value: minioadmin
+        - name: AWS_SECRET_ACCESS_KEY
+          value: minioadmin123
+        - name: MLFLOW_S3_ENDPOINT_URL
+          value: http://minio:9000
+        ports:
+        - containerPort: 5000
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: mlops
+spec:
+  selector:
+    app: mlflow
+  ports:
+  - port: 5000
+    targetPort: 5000
+  type: ClusterIP

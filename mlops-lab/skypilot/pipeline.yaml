@@ -1,0 +1,182 @@
+# Kubeflow Pipeline with SkyPilot GPU Steps
+# This pipeline runs on Kubernetes but delegates GPU work to SkyPilot
+
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: mlops-pipeline-with-skypilot
+spec:
+  entrypoint: mlops-pipeline
+  templates:
+  - name: mlops-pipeline
+    dag:
+      tasks:
+      - name: data-preparation
+        template: data-prep
+        
+      - name: gpu-training
+        template: skypilot-training
+        dependencies: [data-preparation]
+        
+      - name: model-evaluation
+        template: evaluation
+        dependencies: [gpu-training]
+        
+      - name: model-deployment
+        template: deployment
+        dependencies: [model-evaluation]
+
+  # Step 1: Data Preparation (runs on Kubernetes CPU)
+  - name: data-prepgit config --global user.name "juan"
+    container:
+      image: python:3.10-slim
+      command: [python, -c]
+      args:
+      - |
+        import os
+        print("Step 1: Data Preparation")
+        print("Running on Kubernetes CPU node")
+        
+        # Download and preprocess dataset
+        # Save to MinIO for GPU training step
+        
+        print("Data prepared and saved to MinIO")
+        print("Ready for GPU training")
+
+  # Step 2: GPU Training (delegated to SkyPilot/Vast.ai)
+  - name: skypilot-training
+    container:
+      image: berkeleyskypilot/skypilot:latest
+      command: [bash, -c]
+      args:
+      - |
+        echo "Step 2: GPU Training via SkyPilot"
+        
+        # Create SkyPilot task
+        cat > /tmp/train_task.yaml <> 'EOF'
+        task:
+          name: kfp-gpu-training
+          resources:
+            cloud: vast
+            accelerators: RTX4090:1
+            disk_size: 30
+          env:
+            MLFLOW_TRACKING_URI: http://100.87.186.22:30500
+          run: |
+            pip install transformers datasets accelerate peft mlflow
+            python -c "
+import mlflow
+mlflow.set_tracking_uri('http://100.87.186.22:30500')
+mlflow.set_experiment('kfp-pipeline')
+
+with mlflow.start_run():
+    print('Training on GPU...')
+    # Your training code here
+    mlflow.log_metric('accuracy', 0.95)
+    print('Training complete!')
+"
+        EOF
+        
+        # Launch via SkyPilot
+        sky launch /tmp/train_task.yaml \
+          -c kfp-gpu-run \
+          --yes \
+          --down
+          
+        echo "GPU training complete"
+
+  # Step 3: Model Evaluation (runs on Kubernetes CPU)
+  - name: evaluation
+    container:
+      image: python:3.10-slim
+      command: [python, -c]
+      args:
+      - |
+        print("Step 3: Model Evaluation")
+        print("Running on Kubernetes CPU node")
+        
+        # Load model from MinIO
+        # Evaluate on test set
+        # Log metrics to MLflow
+        
+        print("Evaluation complete")
+
+  # Step 4: Model Deployment (runs on Kubernetes)
+  - name: deployment
+    container:
+      image: python:3.10-slim
+      command: [python, -c]
+      args:
+      - |
+        print("Step 4: Model Deployment")
+        print("Deploying model to inference service")
+        
+        # Deploy via KServe or Seldon
+        # Update model version
+        
+        print("Deployment complete")
+        print("Pipeline finished successfully!")
+
+---
+# Alternative: Python-based Kubeflow pipeline
+# This is the Python SDK version that generates the YAML above
+
+# pipeline.py
+from kfp import dsl
+from kfp.dsl import ContainerOp
+
+@dsl.pipeline(
+    name='MLOps with SkyPilot GPU',
+    description='Pipeline that uses SkyPilot for GPU compute'
+)
+def mlops_pipeline():
+    # Step 1: Data prep (Kubernetes)
+    data_prep = dsl.ContainerOp(
+        name='data-preparation',
+        image='python:3.10-slim',
+        command=['python', '-c'],
+        arguments=['print("Preparing data...")']
+    )
+    
+    # Step 2: GPU training (SkyPilot)
+    gpu_training = dsl.ContainerOp(
+        name='gpu-training',
+        image='berkeleyskypilot/skypilot:latest',
+        command=['bash', '-c'],
+        arguments=["""
+            cat > /tmp/task.yaml << 'EOF'
+            task:
+              name: kfp-training
+              resources:
+                cloud: vast
+                accelerators: RTX4090:1
+              run: |
+                echo "Training on GPU..."
+            EOF
+            sky launch /tmp/task.yaml -c kfp-run --yes --down
+        """]
+    )
+    gpu_training.after(data_prep)
+    
+    # Step 3: Evaluation (Kubernetes)
+    evaluation = dsl.ContainerOp(
+        name='evaluation',
+        image='python:3.10-slim',
+        command=['python', '-c'],
+        arguments=['print("Evaluating model...")']
+    )
+    evaluation.after(gpu_training)
+    
+    # Step 4: Deployment (Kubernetes)
+    deployment = dsl.ContainerOp(
+        name='deployment',
+        image='python:3.10-slim',
+        command=['python', '-c'],
+        arguments=['print("Deploying model...")']
+    )
+    deployment.after(evaluation)
+
+if __name__ == '__main__':
+    import kfp.compiler as compiler
+    compiler.Compiler().compile(mlops_pipeline, 'mlops_pipeline.yaml')
+    print("Pipeline compiled to mlops_pipeline.yaml")

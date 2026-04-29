@@ -1,0 +1,54 @@
+# Simple GPU test task
+# Use this to verify SkyPilot + Vast.ai integration works
+
+task:
+  name: gpu-test
+  
+  resources:
+    cloud: vast
+    accelerators: RTX4090:1
+    disk_size: 10
+  
+  run: |
+    echo "=== SkyPilot GPU Test ==="
+    echo ""
+    
+    # Check GPU
+    echo "1. GPU Information:"
+    nvidia-smi
+    echo ""
+    
+    # Check Python and PyTorch
+    echo "2. Python/PyTorch Test:"
+    python3 -c "
+import torch
+print(f'PyTorch version: {torch.__version__}')
+print(f'CUDA available: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'GPU: {torch.cuda.get_device_name(0)}')
+    print(f'GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
+    
+    # Quick computation test
+    x = torch.randn(1000, 1000).cuda()
+    y = torch.matmul(x, x.t())
+    print(f'GPU computation test: SUCCESS')
+    print(f'Result shape: {y.shape}')
+else:
+    print('WARNING: CUDA not available!')
+"
+    echo ""
+    
+    # Check connectivity to cluster
+    echo "3. Testing cluster connectivity:"
+    echo -n "MLflow (100.87.186.22:30500): "
+    curl -s --max-time 5 -o /dev/null -w "%{http_code}" http://100.87.186.22:30500 || echo "FAILED"
+    echo ""
+    
+    echo -n "MinIO (100.87.186.22:30900): "
+    curl -s --max-time 5 -o /dev/null -w "%{http_code}" http://100.87.186.22:30900/minio/health/live || echo "FAILED"
+    echo ""
+    
+    echo "=== Test Complete ==="
+    echo ""
+    echo "If you see GPU info above, SkyPilot + Vast.ai is working!"
+    echo "If cluster connectivity fails, check your Tailscale/network setup."

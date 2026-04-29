@@ -117,11 +117,13 @@ func (c *Client) CreateInstance(offerID int, image string, env map[string]string
 	}
 
 	payload := map[string]interface{}{
-		"client_id":  "kubelet",
-		"image":      image,
-		"env":        envList,
-		"onstart":    onStart,
-		"disk":       diskGB,
+		"client_id":     "kubelet",
+		"image":         image,
+		"env":           envList,
+		"onstart":       onStart,
+		"disk":          diskGB,
+		"image_runtype": "ssh",
+		"gpu_count":     1,
 	}
 
 	body, err := json.Marshal(payload)

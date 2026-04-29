@@ -1,0 +1,196 @@
+# SkyPilot task for LLM fine-tuning on Vast.ai GPU
+# Integrates with local MLOps services (MLflow, MinIO)
+
+task:
+  name: llm-finetuning
+  
+  resources:
+    # Use Vast.ai for GPU compute
+    cloud: vast
+    accelerators: RTX4090:1
+    disk_size: 50
+    
+    # Optional: specify region or cost limits
+    # region: US
+    # spot: true  # Use spot instances for lower cost
+  
+  # Environment variables passed to the task
+  env:
+    # MLflow configuration - points to your local MLflow server
+    # Use your Tailscale IP or public IP
+    MLFLOW_TRACKING_URI: http://100.87.186.22:30500
+    MLFLOW_S3_ENDPOINT_URL: http://100.87.186.22:30900
+    AWS_ACCESS_KEY_ID: minioadmin
+    AWS_SECRET_ACCESS_KEY: minioadmin123
+    
+    # HuggingFace configuration
+    HF_HOME: /workspace/huggingface_cache
+    
+  # Mount data and model storage from MinIO
+  file_mounts:
+    /workspace/data:
+      source: s3://datasets
+      store: minio
+      endpoint_url: http://100.87.186.22:30900
+      access_key: minioadmin
+      secret_key: minioadmin123
+      mode: MOUNT
+      
+    /workspace/models:
+      source: s3://models
+      store: minio
+      endpoint_url: http://100.87.186.22:30900
+      access_key: minioadmin
+      secret_key: minioadmin123
+      mode: MOUNT
+  
+  # Setup commands run once when instance is created
+  setup: |
+    # Install Python dependencies
+    pip install -q \
+      torch==2.1.0 \
+      transformers==4.36.0 \
+      datasets \
+      accelerate \
+      peft \
+      bitsandbytes \
+      mlflow \
+      boto3
+    
+    # Verify GPU
+    echo "GPU Info:"
+    nvidia-smi
+    
+    # Verify connectivity to MLflow
+    echo "Testing MLflow connection..."
+    curl -s -o /dev/null -w "%{http_code}" ${MLFLOW_TRACKING_URI} || echo "MLflow not reachable"
+  
+  # Main training script
+  run: |
+    cd /workspace
+    
+    cat > train_llm.py <> 'PYEOF'
+    import os
+    import mlflow
+    import torch
+    from datasets import load_dataset
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        TrainingArguments,
+        Trainer,
+        DataCollatorForLanguageModeling
+    )
+    from peft import LoraConfig, get_peft_model, TaskType
+    
+    # Configuration
+    MODEL_NAME = os.getenv("MODEL_NAME", "TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+    DATASET_NAME = os.getenv("DATASET_NAME", "tatsu-lab/alpaca")
+    OUTPUT_DIR = "/workspace/models/tinyllama-finetuned"
+    NUM_EPOCHS = int(os.getenv("NUM_EPOCHS", "1"))
+    
+    # Initialize MLflow
+    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+    mlflow.set_experiment("llm-finetuning")
+    
+    with mlflow.start_run(run_name="tinyllama-alpaca"):
+        # Log parameters
+        mlflow.log_params({
+            "model": MODEL_NAME,
+            "dataset": DATASET_NAME,
+            "epochs": NUM_EPOCHS,
+            "gpu": "RTX4090"
+        })
+        
+        print(f"Loading model: {MODEL_NAME}")
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            torch_dtype=torch.float16,
+            device_map="auto"
+        )
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        tokenizer.pad_token = tokenizer.eos_token
+        
+        # Apply LoRA
+        lora_config = LoraConfig(
+            r=16,
+            lora_alpha=32,
+            target_modules=["q_proj", "v_proj"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM
+        )
+        model = get_peft_model(model, lora_config)
+        
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        print(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.2f}%)")
+        
+        mlflow.log_param("trainable_params", trainable)
+        
+        # Load dataset
+        print(f"Loading dataset: {DATASET_NAME}")
+        dataset = load_dataset(DATASET_NAME, split="train[:1000]")
+        
+        # Tokenize
+        def tokenize(examples):
+            return tokenizer(
+                examples["text"],
+                truncation=True,
+                max_length=512,
+                padding="max_length"
+            )
+        
+        tokenized = dataset.map(tokenize, batched=True, remove_columns=dataset.column_names)
+        
+        # Training arguments
+        training_args = TrainingArguments(
+            output_dir="/tmp/results",
+            num_train_epochs=NUM_EPOCHS,
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            learning_rate=2e-4,
+            fp16=True,
+            logging_steps=10,
+            save_strategy="epoch",
+        )
+        
+        # Train
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=tokenized,
+            data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
+        )
+        
+        print("Starting training...")
+        trainer.train()
+        
+        # Evaluate
+        metrics = trainer.evaluate()
+        mlflow.log_metrics(metrics)
+        
+        # Save model
+        print(f"Saving model to {OUTPUT_DIR}")
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        model.save_pretrained(OUTPUT_DIR)
+        tokenizer.save_pretrained(OUTPUT_DIR)
+        
+        # Log model to MLflow
+        mlflow.pytorch.log_model(model, "model")
+        
+        print("Training complete!")
+        print(f"Model saved to: {OUTPUT_DIR}")
+        print(f"View results at: {os.getenv('MLFLOW_TRACKING_URI')}")
+    
+    PYEOF
+    
+    python train_llm.py
+    
+    # Sync results back to MinIO
+    echo "Syncing results to MinIO..."
+    # Models are already saved to /workspace/models which is mounted from MinIO
+    
+    echo "Task complete!"
+    echo "View MLflow results at: ${MLFLOW_TRACKING_URI}"
+    echo "View MinIO artifacts at: ${MLFLOW_S3_ENDPOINT_URL}"

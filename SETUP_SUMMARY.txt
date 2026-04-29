@@ -1,0 +1,136 @@
+REAL KUBERNETES GPU NODES - Setup Complete
+==========================================
+
+WHAT WE BUILT
+-------------
+
+A proper way to add Vast.ai GPU instances as REAL worker nodes to your 
+Kubernetes cluster via Tailscale VPN.
+
+NEW FILES
+---------
+
+scripts/
+  setup-k3s-server-for-workers.sh  - Prepare laptop for worker connections
+  create-vastai-worker.sh          - Create Vast.ai instance as worker node
+  vastai-worker-setup.sh           - Runs inside Vast.ai container
+
+mlops-lab/examples/
+  gpu-training-real-node.yaml      - GPU test job (REAL node)
+  jupyter-gpu.yaml                 - Jupyter on GPU node
+  test-real-node.sh                - Test script
+
+Documentation:
+  REAL_NODE_SETUP.md               - Full setup guide
+  MIGRATION_GUIDE.md               - Migrate from Virtual Kubelet
+
+ARCHITECTURE
+------------
+
+Before (Virtual Kubelet - FAKE):
+  k3s Cluster
+    ├─ panzamachine (control-plane)
+    └─ virtual-vastai (FAKE NODE)
+         │ HTTP API only
+         ▼
+      Container (ISOLATED)
+      ❌ Can't exec, logs, services
+
+After (Real Nodes):
+  k3s Cluster
+    ├─ panzamachine (control-plane)
+    └─ vastai-worker-1 (REAL NODE)
+         │ Tailscale VPN
+         ▼
+      Container (ON NETWORK)
+      ✅ Full kubectl support
+      ✅ Reach MLflow/MinIO
+      ✅ Real pod lifecycle
+
+WHY THIS IS BETTER
+------------------
+
+Virtual Kubelet (OLD):
+  ❌ kubectl exec doesn't work
+  ❌ kubectl logs doesn't work  
+  ❌ Can't reach cluster services
+  ❌ Fake node - limited functionality
+  ❌ Basically just remote Docker
+
+Real Nodes (NEW):
+  ✅ kubectl exec works
+  ✅ kubectl logs works
+  ✅ Full cluster DNS/services
+  ✅ Real worker node
+  ✅ GPU scheduling works
+  ✅ Can use PVCs
+  ✅ Network policies work
+
+HOW IT WORKS
+------------
+
+1. Vast.ai container starts
+2. Installs Tailscale
+3. Joins your Tailnet
+4. Installs k3s agent
+5. Configures for container environment:
+   - Native snapshotter (no overlayfs)
+   - cgroupfs driver
+   - Fake /dev/kmsg
+6. Joins cluster as real node
+7. Can reach all cluster services
+
+QUICK START
+-----------
+
+1. Prepare laptop:
+   sudo bash scripts/setup-k3s-server-for-workers.sh
+
+2. Get credentials:
+   export VASTAI_KEY="your-key"
+   export TS_AUTHKEY="tskey-auth-xxx"
+   export K3S_URL="https://100.87.186.22:6443"
+   export K3S_TOKEN="K10xxx"
+
+3. Create worker:
+   bash scripts/create-vastai-worker.sh
+
+4. Verify:
+   kubectl get nodes -w
+
+5. Run GPU job:
+   kubectl apply -f mlops-lab/examples/gpu-training-real-node.yaml
+   kubectl logs -f job/gpu-training-real-node
+
+IMPORTANT NOTES
+---------------
+
+- Vast.ai has a CDI device injection bug that may prevent containers
+  from starting. If you see "unresolvable CDI devices", try a 
+  different GPU model or contact Vast.ai support.
+
+- The worker setup handles container limitations:
+  * No systemd -> runs processes directly
+  * No overlayfs -> uses native snapshotter
+  * No /dev/kmsg -> creates fake device
+  * Limited cgroups -> uses cgroupfs driver
+
+- Worker nodes are ephemeral - if the Vast.ai container stops,
+  the node disappears from the cluster.
+
+COST
+----
+
+Same as before:
+- Your laptop services: FREE
+- Vast.ai GPU: $0.02-0.50/hour
+- Total per training run: ~$0.50-2.00
+
+NEXT STEPS
+----------
+
+1. Read REAL_NODE_SETUP.md for full details
+2. Run setup-k3s-server-for-workers.sh on your laptop
+3. Create a Vast.ai worker node
+4. Test with gpu-training-real-node.yaml
+5. Build your ML pipelines!

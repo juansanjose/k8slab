@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyter-gpu
+  namespace: mlops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jupyter-gpu
+  template:
+    metadata:
+      labels:
+        app: jupyter-gpu
+    spec:
+      nodeSelector:
+        vast.ai/gpu: "true"
+      containers:
+      - name: jupyter
+        image: jupyter/tensorflow-notebook:latest
+        command:
+        - start-notebook.sh
+        - --NotebookApp.token=''
+        - --NotebookApp.password=''
+        ports:
+        - containerPort: 8888
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+            memory: "8Gi"
+            cpu: "4"
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+      tolerations:
+      - key: "node.kubernetes.io/not-ready"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300

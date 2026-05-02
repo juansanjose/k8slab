@@ -1,0 +1,60 @@
+# Quick GPU connectivity and PyTorch test with SSH tunnel
+# Uses RunPod L4 (cheapest GPU: ~$0.39/hr on-demand)
+# Connects to local k3s services via SSH reverse tunnel
+# 
+# REQUIRED: Run this on your local machine first:
+# ssh -N -R 30500:localhost:30500 -R 30900:localhost:30900 gpu-test-tailscale
+
+resources:
+  cloud: runpod
+  accelerators: L4:1
+  disk_size: 10
+  image_id: docker:pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime
+
+envs:
+  MLFLOW_TRACKING_URI: http://localhost:30500
+  MINIO_ENDPOINT: http://localhost:30900
+
+run: |
+  echo "=========================================="
+  echo "  SkyPilot GPU Test on RunPod (L4)"
+  echo "  With SSH Tunnel to Local Services"
+  echo "=========================================="
+  echo ""
+  
+  echo "[1/5] Waiting for SSH tunnel..."
+  for i in {1..30}; do
+    if curl -s --max-time 2 ${MLFLOW_TRACKING_URI} > /dev/null 2>&1; then
+      echo "SSH tunnel active!"
+      break
+    fi
+    echo "Waiting for tunnel... ($i/30)"
+    sleep 2
+  done
+  echo ""
+  
+  echo "[2/5] GPU Information:"
+  nvidia-smi
+  echo ""
+  
+  echo "[3/5] PyTorch CUDA Test:"
+  python3 -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'GPU count: {torch.cuda.device_count()}'); print(f'GPU: {torch.cuda.get_device_name(0)}'); print(f'Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')"
+  echo ""
+  
+  echo "[4/5] Testing MLflow connectivity via SSH tunnel:"
+  curl -s --max-time 5 ${MLFLOW_TRACKING_URI} > /dev/null && echo "MLflow: REACHABLE" || echo "MLflow: NOT REACHABLE"
+  echo ""
+  
+  echo "[5/5] Testing MinIO connectivity via SSH tunnel:"
+  curl -s --max-time 5 ${MINIO_ENDPOINT}/minio/health/live > /dev/null && echo "MinIO: REACHABLE" || echo "MinIO: NOT REACHABLE"
+  echo ""
+  
+  echo "[6/6] System info:"
+  echo "CPU: $(nproc) cores"
+  echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+  echo "Disk: $(df -h / | awk 'NR==2 {print $4}') available"
+  echo ""
+  
+  echo "=========================================="
+  echo "  GPU Test Complete!"
+  echo "=========================================="

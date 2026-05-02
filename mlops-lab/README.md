@@ -1,279 +1,254 @@
-# MLOps Lab - Complete Kubernetes AI/ML Platform
+# MLOps Lab - Cloud-Native Hybrid Setup
 
-A production-ready MLOps environment running on k3s with Vast.ai GPU offloading for cost-effective training.
+Fully automated, containerized MLOps lab that runs locally on Kubernetes (k3s) and offloads GPU training to cloud instances via SkyPilot.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         k3s Cluster                                  │
-│                                                                      │
-│  Development          Tracking          Storage         Pipelines    │
-│  ┌──────────┐       ┌──────────┐      ┌────────┐      ┌─────────┐  │
-│  │JupyterHub│       │  MLflow  │      │ MinIO  │      │Kubeflow │  │
-│  │:30800    │       │:30500    │      │:30901  │      │:8888    │  │
-│  └──────────┘       └──────────┘      └────────┘      └─────────┘  │
-│       │                  │                │                 │        │
-│       └──────────────────┼────────────────┼─────────────────┘        │
-│                          ▼                ▼                          │
-│              ┌──────────────────────────────────┐                   │
-│              │     PostgreSQL (Metadata)        │                   │
-│              └──────────────────────────────────┘                   │
-│                                                                      │
-└──────────────────────────────────┬───────────────────────────────────┘
-                                   │ Tailscale VPN
-                                   ▼
-                        ┌──────────────────────┐
-                        │   Vast.ai Instance   │
-                        │  (A100/RTX 5090)     │
-                        │   GPU Training       │
-                        │   $0.02-0.50/hr      │
-                        └──────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    LOCAL (k3s)                               │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │ MLflow   │  │ MinIO    │  │ PostgreSQL│  │ JupyterHub│   │
+│  │ :30500   │  │ :30900   │  │ :5432     │  │ :30800    │   │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
+│       │              │              │              │         │
+│  └──────────────────────────────────────────────────────┘   │
+│                    Kubernetes Cluster                        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ SSH Tunnel (automated)
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 CLOUD (SkyPilot + RunPod)                    │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  GPU Instance (NVIDIA L4 - $0.39/hr)               │   │
+│  │  ┌──────────────────────────────────────────────┐  │   │
+│  │  │ Training Container                             │  │   │
+│  │  │  - PyTorch 2.3.0                               │  │   │
+│  │  │  - Transformers 4.45.0                         │  │   │
+│  │  │  - LoRA Fine-tuning                            │  │   │
+│  │  │  - MLflow Logging                              │  │   │
+│  │  └──────────────────────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
-
-## Deployed Services
-
-| Service | Purpose | Access | Status |
-|---------|---------|--------|--------|
-| **MLflow** | Experiment tracking | NodePort :30500 | Running |
-| **MinIO** | S3-compatible storage | NodePort :30901 | Running |
-| **JupyterHub** | Notebooks & development | NodePort :30800 | Running |
-| **TensorBoard** | Training visualization | NodePort :30606 | Running |
-| **Kubeflow Pipelines** | ML workflows | ClusterIP :8888 | Running |
-| **PostgreSQL** | Metadata database | ClusterIP :5432 | Running |
 
 ## Quick Start
 
-### Access Services
-
-All services are exposed via NodePort on your k3s node:
+### Option 1: One-Command Setup (Recommended)
 
 ```bash
-# JupyterHub (Password: mlops123)
-curl http://localhost:30800
-
-# MLflow Tracking
-curl http://localhost:30500
-
-# MinIO Console (Login: minioadmin / minioadmin123)
-curl http://localhost:30901
-
-# TensorBoard
-curl http://localhost:30606
+cd mlops-lab
+sudo make setup
 ```
 
-Or use port-forwarding:
+This will:
+1. Install k3s (lightweight Kubernetes)
+2. Deploy MLflow, MinIO, PostgreSQL
+3. Install SkyPilot
+4. Configure everything automatically
+
+### Option 2: Step by Step
+
 ```bash
-kubectl port-forward svc/jupyterhub 8000:8000 -n mlops
-kubectl port-forward svc/mlflow 5000:5000 -n mlops
-kubectl port-forward svc/minio 9001:9001 -n mlops
+# 1. Setup infrastructure
+sudo ./scripts/setup.sh
+
+# 2. Build training container
+make build
+
+# 3. Deploy Kubernetes resources
+make deploy
+
+# 4. Start training
+make train
 ```
 
-### Run ML Pipeline
+## Usage
 
-The example pipeline fine-tunes DistilBERT on IMDB reviews:
+### Training Jobs
 
-```python
-# pipelines/hf_pipeline.py
-# 1. Download dataset from HuggingFace
-# 2. Fine-tune model with MLflow tracking
-# 3. Log metrics and model artifacts
-# 4. Generate KServe deployment config
+```bash
+# Submit LLM fine-tuning job
+make train
 
-# Compile and run
-python mlops-lab/pipelines/hf_pipeline.py
+# Submit BERT classification job
+make train-bert
+
+# Run GPU connectivity test
+make test-gpu
 ```
 
-### Use Vast.ai GPU
+### Monitoring
 
-Add annotations to your training pods:
+```bash
+# Check cluster status
+make status
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: gpu-training
-  annotations:
-    vast.ai/gpu-name: "RTX 4090"  # or "A100", "RTX 3090"
-    vast.ai/max-dph: "0.50"       # max $/hour
-    vast.ai/disk-gb: "20"         # disk space
-spec:
-  nodeName: virtual-vastai
-  containers:
-  - name: training
-    image: your-training-image
-    resources:
-      limits:
-        nvidia.com/gpu: "1"
+# View training logs
+make logs
+
+# Open MLflow UI
+make mlflow
+```
+
+### Local Development (No Cloud)
+
+```bash
+# Start local services with Docker Compose
+make local-dev
+
+# Access:
+#   MLflow: http://localhost:30500
+#   MinIO:  http://localhost:30901
+
+# Stop local services
+make stop-local
+```
+
+## Project Structure
+
+```
+mlops-lab/
+├── Dockerfile                    # Training container
+├── docker-compose.yaml           # Local development stack
+├── Makefile                      # Easy commands
+├── scripts/
+│   ├── setup.sh                 # Automated setup
+│   ├── train.sh                 # Submit training jobs
+│   ├── cloud-native.sh          # Container orchestration
+│   └── skypilot-helpers.sh      # SkyPilot utilities
+├── k8s/
+│   ├── configs.yaml             # ConfigMaps and Secrets
+│   └── training-job.yaml        # Kubernetes Job template
+├── skypilot/
+│   └── tasks/                   # SkyPilot task definitions
+├── training-scripts/
+│   ├── train_llm.py             # LLM training code
+│   └── train_bert.py            # BERT training code
+└── base/                        # Kubernetes base manifests
 ```
 
 ## Configuration
 
-### MinIO Buckets
-
-Default buckets created:
-- `mlflow` - MLflow artifacts
-- `models` - Model storage
-- `datasets` - Dataset cache
-
-### MLflow Integration
-
-```python
-import mlflow
-import os
-
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://minio.mlops:9000"
-os.environ["AWS_ACCESS_KEY_ID"] = "minioadmin"
-os.environ["AWS_SECRET_ACCESS_KEY"] = "minioadmin123"
-
-mlflow.set_tracking_uri("http://mlflow.mlops:5000")
-mlflow.set_experiment("my-experiment")
-
-with mlflow.start_run():
-    mlflow.log_param("epochs", 3)
-    mlflow.log_metric("accuracy", 0.95)
-    mlflow.pytorch.log_model(model, "model")
-```
-
-### Kubeflow Pipelines SDK
-
-```python
-import kfp
-
-client = kfp.Client(host="http://ml-pipeline.kubeflow:8888")
-client.create_run_from_pipeline_func(
-    pipeline_func=hf_pipeline,
-    arguments={"model_name": "distilbert-base-uncased"}
-)
-```
-
-## GitOps with Flux (Optional)
+Edit `.env` to configure:
+- RunPod API key
+- Model selection
+- Training hyperparameters
+- GPU type
 
 ```bash
-# Install Flux
-flux install
-
-# Configure GitOps
-kubectl apply -f mlops-lab/flux/gitops.yaml
-
-# Now changes pushed to Git are auto-deployed
+# Example .env
+RUNPOD_API_KEY=your_key_here
+MODEL_NAME=TinyLlama/TinyLlama-1.1B-Chat-v1.0
+NUM_EPOCHS=1
+BATCH_SIZE=2
+LEARNING_RATE=2e-4
 ```
 
 ## Cost Optimization
 
-### Vast.ai Settings
-
-Set in `vastai-kubelet/deploy/deployment.yaml`:
-```yaml
-- name: MAX_DPH
-  value: "0.50"        # Max $0.50/hour
-- name: MIN_COMPUTE_CAP
-  value: "700"         # Minimum CUDA capability
-- name: SEARCH_LIMIT
-  value: "10"          # Check 10 cheapest offers
-```
-
-### Resource Limits
-
-All services have conservative limits:
-- PostgreSQL: 512MB RAM
-- MinIO: 1GB RAM
-- MLflow: 512MB RAM
-- JupyterHub: 1GB RAM
-- Kubeflow API: 512MB RAM
-
-## File Structure
-
-```
-mlops-lab/
-├── base/
-│   ├── namespaces.yaml        # mlops, kubeflow, kserve, flux-system
-│   ├── pvcs.yaml              # Persistent volumes
-│   ├── postgres.yaml          # Metadata database
-│   ├── minio.yaml             # S3-compatible storage
-│   ├── mlflow.yaml            # Experiment tracking
-│   ├── jupyterhub.yaml        # Notebooks
-│   ├── kubeflow-pipelines.yaml # ML workflows
-│   ├── mysql-kubeflow.yaml    # Pipeline metadata
-│   ├── ingress.yaml           # NodePort services
-│   └── optional-tools.yaml    # TensorBoard, W&B
-├── pipelines/
-│   └── hf_pipeline.py         # HuggingFace text classification
-├── flux/
-│   └── gitops.yaml            # GitOps configuration
-└── README.md                  # This file
-```
+- GPU instances auto-terminate after training
+- Local services run on existing hardware (free)
+- L4 GPU costs ~$0.39/hr on RunPod
+- Typical training run: 2-5 minutes (~$0.03)
 
 ## Troubleshooting
 
-### Pod stuck in Pending on virtual-vastai
-
-Check Vast.ai controller:
+### k3s not accessible
 ```bash
-kubectl logs -n vastai-system deployment/vastai-kubelet
+sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 ```
 
-### MLflow can't connect to MinIO
-
-Verify MinIO is running:
+### SSH tunnel issues
 ```bash
-kubectl get pods -n mlops -l app=minio
-kubectl logs -n mlops job/minio-setup
+# Start tunnel manually
+ssh -N -R 30500:localhost:30500 -R 30900:localhost:30900 gpu-training
 ```
 
-### Kubeflow API not responding
+### SkyPod not available
+RunPod instances have limited availability. The system will automatically try multiple regions.
 
-Check MySQL connection:
+## Enterprise Features
+
+- **Containerized**: All training runs in Docker containers
+- **Kubernetes-native**: Uses K8s Jobs, ConfigMaps, Secrets
+- **Automated**: One-command setup and deployment
+- **Cloud-agnostic**: SkyPilot supports AWS, GCP, Azure, RunPod, Vast.ai
+- **Centralized logging**: All metrics flow to local MLflow
+- **Reproducible**: Full experiment tracking with artifacts
+- **Cost-effective**: Only pay for GPU time, not idle resources
+
+## Architecture Details
+
+### Container Abstraction
+The training environment is fully containerized:
+- Base image: `pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime`
+- All dependencies baked into image
+- No runtime pip installs
+- Consistent environment across local and cloud
+
+### Kubernetes Integration
+- **ConfigMaps**: Store training hyperparameters
+- **Secrets**: Secure API keys and credentials
+- **Jobs**: Run training as Kubernetes Jobs
+- **PVCs**: Persistent storage for models
+
+### Cloud Bridge
+- SSH tunnel connects cloud instances to local services
+- SkyPilot manages GPU provisioning
+- Automatic cleanup of cloud resources
+
+## Advanced Usage
+
+### Custom Training Task
 ```bash
-kubectl logs -n kubeflow deployment/kubeflow-pipelines-api
-kubectl get pods -n kubeflow -l app=mysql
+# Create custom SkyPilot task
+cat > my-task.yaml <<EOF
+resources:
+  cloud: runpod
+  accelerators: A100:1  # Use A100 for larger models
+  disk_size: 200
+
+run: |
+  python3 /workspace/train_custom.py
+EOF
+
+# Submit
+make run-custom TASK=my-task.yaml CLUSTER=my-experiment
 ```
 
-### Out of Memory
-
-Services have conservative limits. Increase if needed:
+### Multi-GPU Training
 ```yaml
 resources:
-  limits:
-    memory: "2Gi"  # Increase from 512Mi
+  cloud: runpod
+  accelerators: L4:4  # 4x L4 GPUs
 ```
 
-## Cleanup
-
-```bash
-# Remove MLOps lab
-kubectl delete -k mlops-lab/base/
-kubectl delete ns kubeflow kserve flux-system
-
-# Keep Vast.ai controller
-# kubectl delete -f vastai-kubelet/deploy/
+### Custom Container
+```dockerfile
+FROM localhost:5000/mlops-training:latest
+COPY my-training-code.py /workspace/
+RUN pip install my-custom-package
 ```
+
+## Security Notes
+
+- API keys stored in Kubernetes Secrets
+- SSH keys managed by SkyPilot automatically
+- Local services not exposed to internet (localhost only)
+- Tailscale VPN optional for remote access
 
 ## Next Steps
 
-1. **Try the pipeline**: `python mlops-lab/pipelines/hf_pipeline.py`
-2. **Deploy KServe**: Uncomment KServe sections for model serving
-3. **Add W&B**: Enable Weights & Biases tracking
-4. **Configure Flux**: Set up GitOps for auto-deployment
-5. **Custom pipelines**: Build your own HuggingFace pipelines
+1. **Monitor training**: http://localhost:30500
+2. **Download models**: `scp -r gpu-training:/workspace/models ./`
+3. **Deploy model**: Use KServe or custom inference service
+4. **Scale up**: Modify task YAML for multi-GPU or larger instances
 
-## Architecture Decisions
+## Support
 
-- **Lightweight**: Kubeflow Pipelines standalone instead of full Kubeflow (~2GB vs ~16GB)
-- **Local-first**: All services run on k3s, only GPU training offloaded
-- **Cost-effective**: Vast.ai auto-selects cheapest GPU, retry logic for unavailable offers
-- **Modular**: Each component can be enabled/disabled independently
-- **GitOps-ready**: Flux configuration included for CI/CD
-
-## Status
-
-- [x] PostgreSQL - Running
-- [x] MinIO - Running
-- [x] MLflow - Running
-- [x] JupyterHub - Running
-- [x] Kubeflow Pipelines - Running
-- [x] TensorBoard - Running
-- [x] Vast.ai Integration - Working
-- [ ] KServe - Skipped (complex, add later)
-- [ ] Flux GitOps - Configured, install flux to enable
-- [ ] Weights & Biases - Configured, uncomment to enable
+- SkyPilot docs: https://skypilot.readthedocs.io
+- RunPod docs: https://docs.runpod.io
+- MLflow docs: https://mlflow.org/docs/latest/index.html

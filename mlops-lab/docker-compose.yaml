@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Local GPU Training (for testing without cloud)
+  gpu-trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - MLFLOW_TRACKING_URI=http://host.docker.internal:30500
+      - MLFLOW_S3_ENDPOINT_URL=http://host.docker.internal:30900
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin123
+    volumes:
+      - ./models:/workspace/models
+      - huggingface-cache:/workspace/huggingface_cache
+    networks:
+      - mlops-network
+    profiles:
+      - local-gpu
+
+  # MLflow UI (for local development)
+  mlflow:
+    image: python:3.10-slim
+    command: >
+      bash -c "pip install mlflow boto3 psycopg2-binary &&
+      mlflow server 
+      --backend-store-uri postgresql://mlops:mlops123@postgres:5432/mlflow
+      --default-artifact-root s3://mlflow
+      --host 0.0.0.0 
+      --port 5000
+      --allowed-hosts=*"
+    ports:
+      - "30500:5000"
+    environment:
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin123
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+    depends_on:
+      - postgres
+      - minio
+    networks:
+      - mlops-network
+    profiles:
+      - local-dev
+
+  # PostgreSQL
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: mlops
+      POSTGRES_PASSWORD: mlops123
+      POSTGRES_DB: mlflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - mlops-network
+    profiles:
+      - local-dev
+
+  # MinIO
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "30900:9000"
+      - "30901:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio-data:/data
+    networks:
+      - mlops-network
+    profiles:
+      - local-dev
+
+volumes:
+  postgres-data:
+  minio-data:
+  huggingface-cache:
+
+networks:
+  mlops-network:
+    driver: bridge

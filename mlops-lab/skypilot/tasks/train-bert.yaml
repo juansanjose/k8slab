@@ -1,0 +1,138 @@
+# BERT Text Classification on Vast.ai GPU
+# Fine-tunes DistilBERT for sentiment analysis
+
+name: bert-classification
+
+resources:
+  cloud: vast
+  accelerators: RTX4090:1
+  disk_size: 30
+
+envs:
+  MLFLOW_TRACKING_URI: http://localhost:30500
+  MLFLOW_S3_ENDPOINT_URL: http://localhost:30900
+  AWS_ACCESS_KEY_ID: minioadmin
+  AWS_SECRET_ACCESS_KEY: minioadmin123
+  MODEL_NAME: distilbert-base-uncased
+  DATASET_NAME: imdb
+  NUM_EPOCHS: "3"
+  BATCH_SIZE: "16"
+  LEARNING_RATE: "5e-5"
+
+file_mounts:
+  /workspace/data:
+    source: s3://datasets
+    store: minio
+    endpoint_url: http://localhost:30900
+    access_key: minioadmin
+    secret_key: minioadmin123
+    mode: MOUNT
+    
+  /workspace/models:
+    source: s3://models
+    store: minio
+    endpoint_url: http://localhost:30900
+    access_key: minioadmin
+    secret_key: minioadmin123
+    mode: MOUNT
+
+setup: |
+  pip install -q transformers datasets torch accelerate mlflow scikit-learn
+  echo "Setup complete. GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
+
+run: |
+  cd /workspace
+  
+  cat > train_bert.py << 'PYEOF'
+  import os
+  import mlflow
+  import torch
+  from datasets import load_dataset
+  from transformers import (
+      AutoTokenizer, 
+      AutoModelForSequenceClassification,
+      TrainingArguments, 
+      Trainer
+  )
+  from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+  
+  model_name = os.getenv("MODEL_NAME", "distilbert-base-uncased")
+  dataset_name = os.getenv("DATASET_NAME", "imdb")
+  num_epochs = int(os.getenv("NUM_EPOCHS", "3"))
+  batch_size = int(os.getenv("BATCH_SIZE", "16"))
+  learning_rate = float(os.getenv("LEARNING_RATE", "5e-5"))
+  output_dir = "/workspace/models/bert-imdb"
+  
+  mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+  mlflow.set_experiment("bert-classification")
+  
+  with mlflow.start_run(run_name=f"{model_name}-imdb"):
+      mlflow.log_params({
+          "model": model_name,
+          "dataset": dataset_name,
+          "epochs": num_epochs,
+          "batch_size": batch_size,
+          "learning_rate": learning_rate,
+          "gpu": "RTX4090"
+      })
+      
+      print(f"Loading: {model_name}")
+      tokenizer = AutoTokenizer.from_pretrained(model_name)
+      model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
+      model = model.cuda()
+      
+      print(f"Loading dataset: {dataset_name}")
+      dataset = load_dataset(dataset_name, split="train[:2000]")
+      
+      def tokenize(examples):
+          return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=256)
+      
+      tokenized = dataset.map(tokenize, batched=True)
+      tokenized = tokenized.rename_column("label", "labels")
+      tokenized.set_format("torch", columns=["input_ids", "attention_mask", "labels"])
+      
+      train_size = int(0.8 * len(tokenized))
+      train_ds = tokenized.select(range(train_size))
+      eval_ds = tokenized.select(range(train_size, len(tokenized)))
+      
+      def compute_metrics(pred):
+          labels = pred.label_ids
+          preds = pred.predictions.argmax(-1)
+          precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average="binary")
+          acc = accuracy_score(labels, preds)
+          return {"accuracy": acc, "f1": f1, "precision": precision, "recall": recall}
+      
+      args = TrainingArguments(
+          output_dir="/tmp/results",
+          num_train_epochs=num_epochs,
+          per_device_train_batch_size=batch_size,
+          per_device_eval_batch_size=batch_size,
+          learning_rate=learning_rate,
+          evaluation_strategy="epoch",
+          save_strategy="epoch",
+          load_best_model_at_end=True,
+          report_to=[]
+      )
+      
+      trainer = Trainer(
+          model=model,
+          args=args,
+          train_dataset=train_ds,
+          eval_dataset=eval_ds,
+          compute_metrics=compute_metrics
+      )
+      
+      print("Training...")
+      trainer.train()
+      
+      results = trainer.evaluate()
+      mlflow.log_metrics(results)
+      
+      model.save_pretrained(output_dir)
+      tokenizer.save_pretrained(output_dir)
+      mlflow.pytorch.log_model(model, "model")
+      
+      print(f"Complete! Results: {results}")
+  PYEOF
+  
+  python train_bert.py

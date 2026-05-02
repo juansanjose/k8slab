@@ -1,2 +1,91 @@
-bin/
+# Local environment and secrets
 .env
+.env.*
+!.env.example
+.envrc
+.direnv/
+*.local
+*.secret
+*.secrets
+*.token
+*.key
+*.apikey
+*.authkey
+*.cert
+*.crt
+*.pem
+*.p12
+*.pfx
+*.asc
+*.gpg
+*.age
+*.enc
+id_rsa*
+id_ed25519*
+known_hosts
+.ssh/
+
+# Kubernetes and cloud credentials
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+.kube/
+.kubeconfig
+.runpod/
+.vastai/
+.sky/
+.skypilot/
+.aws/
+.azure/
+.gcp/
+.config/vastai/
+runpod_api_key
+vast_api_key
+tailscale-authkey
+tailscale-auth-key
+k3s-token
+node-token
+*credentials*
+*credential*
+
+# Kubernetes Secret manifests with real values
+**/secret.yaml
+**/secrets.yaml
+**/*-secret.yaml
+**/*-secrets.yaml
+**/*secret*.yaml
+**/*secret*.yml
+**/kubeconfig.yaml
+**/kubeconfig.yml
+**/sealed-secret*.yaml
+**/sealed-secret*.yml
+**/external-secret*.yaml
+**/external-secret*.yml
+mlops-lab/k8s/configs.yaml
+
+# Local agent/tool state
+.flash/
+.codex/
+
+# Local historical snapshots and scratch output
+archive/
+*_STATUS.md
+*_RESULTS.md
+
+# Backup files
+*.backup.*
+
+# Logs and runtime state
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# Build artifacts
+bin/
+dist/
+build/
+target/
+*.out
+*.pid

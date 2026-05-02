@@ -1,110 +1,183 @@
-# Kubernetes AI/ML Lab Environment
+# Hybrid MLOps Lab
 
-This repo contains everything you need to build a cheap, hands-on lab for learning how Kubernetes handles AI/ML workloads — including GPU scheduling, Kubeflow, NVIDIA GPU Operator, and KAI-Scheduler.
+**Kubernetes Control Plane + SkyPilot GPU Compute**
 
----
+A production-ready MLOps environment that keeps infrastructure services on your local k3s cluster while offloading GPU training to RunPod via SkyPilot.
 
-## Quick Start: Vast.ai GPU + Local k3s (Cheapest Option)
+## Architecture
 
-**Architecture:** Your Linux laptop runs k3s control plane. A cheap Vast.ai GPU instance joins as a worker node via Tailscale VPN.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Kubernetes (k3s) - Control Plane             │
+│  ┌──────────┐ ┌──────────┐ ┌────────┐ ┌──────────┐            │
+│  │ Kubeflow │ │  MLflow  │ │ MinIO  │ │ Jupyter  │            │
+│  │Pipelines │ │Tracking  │ │Storage │ │  Hub     │            │
+│  └────┬─────┘ └────┬─────┘ └───┬────┘ └────┬─────┘            │
+│       └─────────────┴───────────┴───────────┘                  │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  SkyPilot submits GPU jobs to RunPod from k3s pods       │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────┬───────────────────────────────┘
+                                   │
+                    SkyPilot API   │  RunPod SDK
+                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         RunPod Cloud                             │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐   │
+│  │ GPU Instance    │  │ GPU Instance    │  │ GPU Instance │   │
+│  │ (RTX 4090)      │  │ (A100)          │  │ (RTX 3090)   │   │
+│  │ Training Job 1  │  │ Training Job 2  │  │ Inference    │   │
+│  └─────────────────┘  └─────────────────┘  └──────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-**Expected cost:** $5-12/month if you practice ~5 hours/week.
+## Quick Start
 
-### Files
+```bash
+# 1. Verify everything is ready
+make setup
 
-| File | Purpose |
-|------|---------|
-| `VAST_K3S_TAILSCALE_GUIDE.md` | Full step-by-step guide |
-| `scripts/setup-k3s-server.sh` | Reconfigure local k3s to bind to Tailscale IP |
-| `scripts/vastai-find-and-create.sh` | Find cheapest GPU, create instance, auto-configure it |
-| `scripts/vastai-onstart.sh` | Run inside Vast.ai instance to install Tailscale + join k3s |
-| `scripts/test-gpu-pod.sh` | Deploy a test pod to verify GPU scheduling |
-| `scripts/install-gpu-operator.sh` | Install NVIDIA GPU Operator on the cluster |
-| `scripts/destroy-vastai-node.sh` | Clean up and destroy the Vast.ai instance |
-| `manifests/gpu-test-pods.yaml` | Test pods for CUDA and PyTorch GPU verification |
-| `manifests/kubeflow-pipelines-lite.yaml` | Lightweight Kubeflow Pipelines install |
+# 2. Test GPU connectivity on RunPod (~$0.01)
+make gpu-test
 
-### Step-by-Step
+# 3. Run LLM training (~$0.44/hr for RTX 4090)
+make train-llm
 
-1. **Install Tailscale** on your laptop and sign up (free)
-2. **Run `scripts/setup-k3s-server.sh`** to reconfigure k3s for Tailscale
-3. **Rent a Vast.ai GPU instance** using `scripts/vastai-find-and-create.sh`
-   - Get a Tailscale auth key from https://login.tailscale.com/admin/settings/keys
-   - `export TS_AUTHKEY=tskey-auth-xxxxxxxxxxxx`
-   - Run `./scripts/vastai-find-and-create.sh` (interactive finder + auto-setup)
-   - Or manually rent and run `scripts/vastai-onstart.sh` inside the instance
-4. **Verify the node joined** with `kubectl get nodes`
-5. **Run `scripts/install-gpu-operator.sh`** to enable GPU support
-6. **Test with `scripts/test-gpu-pod.sh`** or `kubectl apply -f manifests/gpu-test-pods.yaml`
-7. **Install Kubeflow** with `kubectl apply -f manifests/kubeflow-pipelines-lite.yaml`
-8. **When done, run `scripts/destroy-vastai-node.sh`** to stop billing
+# 4. Check results
+make status
+```
 
----
+## Backend: RunPod (Recommended)
+
+**RunPod** is the primary GPU backend. It works out-of-the-box with SkyPilot and is more reliable than alternatives.
+
+**Why RunPod?**
+- ✅ Works with SkyPilot immediately
+- ✅ No SDK compatibility issues
+- ✅ Better network connectivity
+- ✅ More reliable infrastructure
+
+**Pricing:** RTX 4090 ~$0.44/hr, RTX 3090 ~$0.25/hr
+
+**Setup:** See [docs/runpod-setup.md](docs/runpod-setup.md)
+
+## Services
+
+| Service | Purpose | URL | Status |
+|---------|---------|-----|--------|
+| **MLflow** | Experiment tracking | http://localhost:30500 | Running |
+| **MinIO** | S3-compatible storage | http://localhost:30901 | Running |
+| **JupyterHub** | Notebooks | http://localhost:30800 | Running |
+| **TensorBoard** | Visualization | http://localhost:30606 | Running |
+| **Kubeflow** | ML pipelines | Cluster internal | Running |
+
+## Project Structure
+
+```
+mlops-lab/
+├── base/                    # Kubernetes manifests
+│   ├── postgres.yaml        # Metadata database
+│   ├── minio.yaml           # Object storage
+│   ├── mlflow.yaml          # Experiment tracking
+│   ├── jupyterhub.yaml      # Notebooks
+│   └── kubeflow/            # Pipeline engine
+│
+├── skypilot/                # GPU compute tasks
+│   ├── tasks/               # Task definitions
+│   │   ├── gpu-test-runpod.yaml       # RunPod GPU test
+│   │   ├── train-llm-runpod.yaml      # RunPod LLM training
+│   │   ├── train-bert-runpod.yaml     # RunPod BERT training
+│   │   ├── gpu-test.yaml              # Vast.ai GPU test (needs fixes)
+│   │   ├── train-llm.yaml             # Vast.ai LLM training (needs fixes)
+│   │   └── train-bert.yaml            # Vast.ai BERT training (needs fixes)
+│   │
+│   ├── scripts/             # Helper utilities
+│   │   ├── skypilot-helpers.sh  # Bash aliases
+│   │   └── cost-tracker.py      # Spending tracker
+│   │
+│   └── pipelines/           # Kubeflow integration
+│       └── kfp-skypilot.py  # Pipeline with GPU steps
+│
+├── training/                # Training scripts and guides
+├── examples/                # Working examples
+│   ├── 01-gpu-test.sh
+│   ├── 02-mlflow-logging.sh
+│   └── 03-full-pipeline.sh
+│
+└── docs/                    # Documentation
+    ├── ARCHITECTURE.md      # Detailed architecture
+    ├── skypilot-guide.md    # SkyPilot usage guide
+    ├── runpod-setup.md      # RunPod setup guide
+    ├── cost-optimization.md # Cost saving strategies
+    ├── troubleshooting.md   # Common issues
+    └── VASTAI_PR_DOCUMENTATION.md  # Vast.ai PR docs
+```
+
+## Commands
+
+```bash
+# GPU Tasks (RunPod backend)
+make gpu-test           # Test GPU (~$0.01, 2-5 min)
+make train-llm          # LLM fine-tuning
+make train-bert         # BERT classification
+
+# Monitoring
+make status             # Clusters and services
+make costs              # Track spending
+make services           # Health check
+
+# Utilities
+source mlops-lab/skypilot/scripts/skypilot-helpers.sh
+skypilot-help           # Show all helper commands
+```
+
+## Vast.ai (Alternative Backend)
+
+**Status:** Requires PR fixes to work with SkyPilot 0.12.1+
+
+Vast.ai tasks exist in the codebase but have SDK compatibility issues:
+- `api_key_access` AttributeError
+- Unsupported `direct` parameter
+- Incorrect `ssh` parameter
+- Wrong `env` parameter type
+
+**PR Submitted:** https://github.com/skypilot-org/skypilot/pull/9487
+
+**Documentation:** See [docs/VASTAI_PR_DOCUMENTATION.md](docs/VASTAI_PR_DOCUMENTATION.md)
+
+**Workaround:** Use RunPod backend for now, or use Vast.ai CLI directly:
+```bash
+vastai search offers 'gpu_name=="RTX 4090"' -o dph
+vastai create instance <id> --image pytorch/pytorch --disk 10 --ssh
+```
+
+## Cost Model
+
+| Component | Cost | Notes |
+|-----------|------|-------|
+| **k3s cluster** (laptop) | $0 | Your hardware |
+| **MLflow, MinIO, etc.** | $0 | Runs locally |
+| **RunPod GPU** | $0.25-2.49/hr | Only when training |
+| **Typical training run** | ~$0.15-1.00 | 30min-2hr session |
+
+## Next Steps
+
+1. Run `make gpu-test` to verify RunPod works
+2. Try `make train-llm` for first real training job
+3. Check MLflow UI to see logged metrics
+4. Explore Kubeflow integration in `skypilot/pipelines/`
+5. Set up cost alerts with `cost-tracker.py`
 
 ## Documentation
 
-| Document | What it covers |
-|----------|---------------|
-| `README.md` | This project overview |
-| `ARCHITECTURE.md` | Deep dive into the Virtual Kubelet codebase |
-| `COMPARISON.md` | Comparison with Karmada, SLURM, KAI-Scheduler |
-| `SLURM_CONTAINERS.md` | How SLURM schedules containers and GPUs |
-| `VAST_K3S_TAILSCALE_GUIDE.md` | Connecting Vast.ai GPU to local k3s |
-| `LAB_SETUP_GUIDE.md` | Broader lab setup options (cloud, on-prem) |
+- [RunPod Setup](docs/runpod-setup.md) - Configure RunPod backend
+- [Architecture Details](docs/ARCHITECTURE.md) - System design
+- [SkyPilot Guide](docs/skypilot-guide.md) - How to use SkyPilot
+- [Cost Optimization](docs/cost-optimization.md) - Keep costs low
+- [Troubleshooting](docs/troubleshooting.md) - Common issues
+- [Vast.ai PR](docs/VASTAI_PR_DOCUMENTATION.md) - Vast.ai fix documentation
 
 ---
 
-## Scripts
-
-All scripts are in `scripts/` and are executable.
-
-```bash
-# Make sure they are executable
-chmod +x scripts/*.sh
-
-# Run any script
-./scripts/setup-k3s-server.sh
-```
-
----
-
-## Manifests
-
-Kubernetes manifests are in `manifests/`.
-
-```bash
-# Test GPU scheduling
-kubectl apply -f manifests/gpu-test-pods.yaml
-
-# Install lightweight Kubeflow Pipelines
-kubectl apply -f manifests/kubeflow-pipelines-lite.yaml
-```
-
----
-
-## Learning Path
-
-1. **Day 1-2:** Set up cluster + GPU node. Verify `nvidia-smi` works in a pod.
-2. **Day 3-4:** Install NVIDIA GPU Operator. Explore GPU metrics with DCGM.
-3. **Day 5-7:** Install Kubeflow Pipelines. Build a simple training pipeline.
-4. **Day 8-10:** Install KAI-Scheduler. Experiment with gang scheduling, queues, GPU sharing.
-5. **Day 11-14:** Deploy an inference workload (vLLM, Triton) with autoscaling.
-
----
-
-## Cost Comparison
-
-| Approach | Monthly Cost (5 hrs/week) | Complexity |
-|----------|--------------------------|------------|
-| Vast.ai + local k3s | $5-12 | Medium |
-| GCP GKE (Spot T4) | $0-15 (with $300 credit) | Low |
-| AWS EKS (Spot G4dn) | $0-20 (with free tier) | Medium |
-| All local (no GPU) | $0 | N/A (no GPU) |
-
----
-
-## Notes
-
-- This is a **learning environment**, not production-ready.
-- The Virtual Kubelet project in this repo is experimental and for educational purposes.
-- For production AI/ML on Kubernetes, consider **KAI-Scheduler** or **NVIDIA GPU Operator** on managed Kubernetes (GKE, EKS, AKS).
+**Status:** All control plane services running. RunPod backend ready for GPU training jobs.

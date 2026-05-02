@@ -1,0 +1,69 @@
+# Quick GPU connectivity and PyTorch test with Tailscale
+# Uses RunPod L4 (cheapest GPU: ~$0.39/hr on-demand)
+# Includes Tailscale for reaching local k3s services
+
+resources:
+  cloud: runpod
+  accelerators: L4:1
+  disk_size: 10
+  image_id: docker:pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime
+
+envs:
+  TAILSCALE_AUTHKEY: ${TAILSCALE_AUTHKEY}
+  MLFLOW_TRACKING_URI: http://100.87.186.22:30500
+  MINIO_ENDPOINT: http://100.87.186.22:30900
+
+setup: |
+  echo "[setup] Installing Tailscale..."
+  curl -fsSL https://tailscale.com/install.sh | sh
+  echo "[setup] Tailscale installed"
+
+run: |
+  echo "=========================================="
+  echo "  SkyPilot GPU Test on RunPod (L4)"
+  echo "  With Tailscale VPN"
+  echo "=========================================="
+  echo ""
+  
+  echo "[1/6] Starting Tailscale (userspace mode)..."
+  tailscaled --tun=userspace-networking &
+  sleep 3
+  tailscale up --authkey="$TAILSCALE_AUTHKEY" --accept-routes --netfilter-mode=off
+  
+  echo "Waiting for Tailscale IP..."
+  for i in {1..10}; do
+    TS_IP=$(tailscale ip -4 2>/dev/null || true)
+    if [ -n "$TS_IP" ]; then
+      echo "Tailscale IP: $TS_IP"
+      break
+    fi
+    echo "Waiting... ($i/10)"
+    sleep 2
+  done
+  echo ""
+  
+  echo "[2/6] GPU Information:"
+  nvidia-smi
+  echo ""
+  
+  echo "[3/6] PyTorch CUDA Test:"
+  python3 -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'GPU count: {torch.cuda.device_count()}'); print(f'GPU: {torch.cuda.get_device_name(0)}'); print(f'Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')"
+  echo ""
+  
+  echo "[4/6] Testing MLflow connectivity via Tailscale:"
+  curl -s --max-time 5 ${MLFLOW_TRACKING_URI} > /dev/null && echo "MLflow: ✅ REACHABLE" || echo "MLflow: ❌ NOT REACHABLE"
+  echo ""
+  
+  echo "[5/6] Testing MinIO connectivity via Tailscale:"
+  curl -s --max-time 5 ${MINIO_ENDPOINT}/minio/health/live > /dev/null && echo "MinIO: ✅ REACHABLE" || echo "MinIO: ❌ NOT REACHABLE"
+  echo ""
+  
+  echo "[6/6] System info:"
+  echo "CPU: $(nproc) cores"
+  echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+  echo "Disk: $(df -h / | awk 'NR==2 {print $4}') available"
+  echo ""
+  
+  echo "=========================================="
+  echo "  GPU Test Complete!"
+  echo "=========================================="
